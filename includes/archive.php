@@ -7,6 +7,20 @@
  * are then collected recursively, so nested layouts inside an archive work.
  */
 
+/*
+ * Limits applied to ZIP uploads (public/upload.php) so a small, highly
+ * compressed archive cannot expand into something that exhausts a PHP worker
+ * or the temp disk. Real packages top out at ~11 entries / ~235 MiB per entry /
+ * ~265 MiB expanded, so the defaults leave headroom. Override in .env:
+ *   ZIP_MAX_ENTRIES      — max entries of any kind in one archive
+ *   ZIP_MAX_ENTRY_BYTES  — max expanded size of a single .xml entry
+ *   ZIP_MAX_TOTAL_BYTES  — max expanded size of all .xml entries combined
+ * (Defined here, not config.php, which is server-specific and not in git.)
+ */
+defined('ZIP_MAX_ENTRIES')     || define('ZIP_MAX_ENTRIES',     max(1, (int)($_ENV['ZIP_MAX_ENTRIES']     ?? 100)));
+defined('ZIP_MAX_ENTRY_BYTES') || define('ZIP_MAX_ENTRY_BYTES', max(1, (int)($_ENV['ZIP_MAX_ENTRY_BYTES'] ?? 300 * 1024 * 1024)));
+defined('ZIP_MAX_TOTAL_BYTES') || define('ZIP_MAX_TOTAL_BYTES', max(1, (int)($_ENV['ZIP_MAX_TOTAL_BYTES'] ?? 600 * 1024 * 1024)));
+
 /** Reserved dropbox subdirectories that must never be treated as input. */
 const INGEST_RESERVED_DIRS = ['processed', 'rejected', 'unresolved'];
 
@@ -92,6 +106,56 @@ function extract_archive(string $path, string $dest, string &$err): bool {
     }
     $err = 'no tar extractor available (install tar or enable ext-phar)';
     return false;
+}
+
+/**
+ * Stream one ZIP entry to $dest_path without ever holding it in memory,
+ * refusing to write more than $max_bytes.
+ *
+ * The limit is enforced on bytes actually produced by the decompressor, not on
+ * the size declared in the ZIP headers (which an attacker controls). Returns
+ * the number of bytes written, or false with $err set. On failure the
+ * partial destination file is removed.
+ */
+function zip_entry_to_file_limited(ZipArchive $zip, int $index, string $dest_path,
+                                   int $max_bytes, string &$err): int|false
+{
+    $err = '';
+    $in  = $zip->getStreamIndex($index);
+    if ($in === false) { $err = 'could not read entry'; return false; }
+
+    $out = @fopen($dest_path, 'wb');
+    if ($out === false) { fclose($in); $err = 'could not create temp file'; return false; }
+
+    $written = 0;
+    $ok      = true;
+    while (!feof($in)) {
+        // Never ask for more than the remaining budget plus one byte, so an
+        // over-limit entry is detected without writing past the cap.
+        $want  = (int)min(65536, $max_bytes - $written + 1);
+        $chunk = fread($in, $want);
+        if ($chunk === false) { $err = 'read error'; $ok = false; break; }
+        if ($chunk === '') continue;
+        $written += strlen($chunk);
+        if ($written > $max_bytes) {
+            $err = 'expands beyond the ' . format_bytes_limit($max_bytes) . ' limit';
+            $ok  = false;
+            break;
+        }
+        if (fwrite($out, $chunk) !== strlen($chunk)) { $err = 'write error (disk full?)'; $ok = false; break; }
+    }
+    fclose($in);
+    fclose($out);
+
+    if (!$ok) { @unlink($dest_path); return false; }
+    return $written;
+}
+
+/** Human-readable byte count for limit error messages. */
+function format_bytes_limit(int $bytes): string {
+    if ($bytes >= 1048576) return round($bytes / 1048576) . ' MB';
+    if ($bytes >= 1024)    return round($bytes / 1024) . ' KB';
+    return $bytes . ' bytes';
 }
 
 /**

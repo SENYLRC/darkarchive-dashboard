@@ -122,15 +122,60 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     $errors[] = "Could not open ZIP file: $orig_name";
                     continue;
                 }
-                $found = 0;
+                // Cap entry count before touching any entry.
+                if ($zip->numFiles > ZIP_MAX_ENTRIES) {
+                    $errors[] = "$orig_name has {$zip->numFiles} entries; the limit is "
+                              . ZIP_MAX_ENTRIES . ". Skipped.";
+                    $zip->close();
+                    continue;
+                }
+
+                // Pre-flight on declared sizes: reject obviously oversized
+                // archives without decompressing anything. Declared sizes are
+                // attacker-controlled, so the streaming copy below enforces the
+                // same limits on bytes actually produced.
+                $too_big = null;
+                for ($z = 0; $z < $zip->numFiles; $z++) {
+                    $st = $zip->statIndex($z);
+                    if ($st === false) continue;
+                    if (strtolower(pathinfo($st['name'], PATHINFO_EXTENSION)) !== 'xml') continue;
+                    if ($st['size'] > ZIP_MAX_ENTRY_BYTES) {
+                        $too_big = "{$st['name']} declares " . format_bytes_limit((int)$st['size'])
+                                 . " expanded; the per-file limit is " . format_bytes_limit(ZIP_MAX_ENTRY_BYTES);
+                        break;
+                    }
+                }
+                if ($too_big !== null) {
+                    $errors[] = "$orig_name: $too_big. Skipped.";
+                    $zip->close();
+                    continue;
+                }
+
+                $found     = 0;
+                $remaining = ZIP_MAX_TOTAL_BYTES;   // shared budget across all entries
                 for ($z = 0; $z < $zip->numFiles; $z++) {
                     $entry = $zip->getNameIndex($z);
+                    if ($entry === false) continue;
                     if (strtolower(pathinfo($entry, PATHINFO_EXTENSION)) !== 'xml') continue;
                     $found++;
                     $base_name = basename($entry);
                     $tmp_xml   = tempnam(sys_get_temp_dir(), 'da_xml_');
-                    file_put_contents($tmp_xml, $zip->getFromIndex($z));
-                    $xml_size = filesize($tmp_xml);
+                    if ($tmp_xml === false) {
+                        $errors[] = "Could not create a temp file for $base_name in $orig_name.";
+                        break;
+                    }
+
+                    $copy_err = '';
+                    $xml_size = zip_entry_to_file_limited(
+                        $zip, $z, $tmp_xml, min(ZIP_MAX_ENTRY_BYTES, $remaining), $copy_err);
+                    if ($xml_size === false) {
+                        @unlink($tmp_xml);
+                        $errors[] = "$base_name in $orig_name: $copy_err. "
+                                  . "Skipped the rest of this ZIP.";
+                        break;  // a bomb/limit hit invalidates the archive; stop processing it
+                    }
+                    $remaining -= $xml_size;
+
                     web_process_xml($db, $org_id, $tmp_xml, $base_name,
                                     $xml_size, "$notes [from $orig_name]", $loc_code,
                                     $errors, $successes);
