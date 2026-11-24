@@ -1,0 +1,42 @@
+# Credentials and config — NEVER commit these
+includes/config.php
+.env
+*.env
+
+# Google Cloud service account key — NEVER commit
+*.json
+service-account-key.json
+
+# Composer dependencies — install via: composer require google/cloud-recaptcha-enterprise
+vendor/
+composer.lock
+
+# Uploaded files
+uploads/
+
+# Dropbox and processing folders
+dropbox/
+*/processed/
+*/rejected/
+
+# Logs
+*.log
+
+# SQL upgrade scripts (contain schema/credential details)
+upgrade_*.sql
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Also exclude mailer.php (contains org email addresses and site URL)
+includes/mailer.php
+includes/recaptcha.php
+
+# Internal notes and generated guide (contain infrastructure details) — kept locally only
+STATUS.md
+Dark_Archive_System_Guide.docx
