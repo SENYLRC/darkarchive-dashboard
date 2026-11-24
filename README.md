@@ -1,4 +1,29 @@
 # Dark Archive — XML Package Manager
+
+A PHP/MySQL admin dashboard for ingesting, searching and reporting on
+Archivematica METS/PREMIS XML packages held in a digital preservation dark
+archive.
+
+## Screenshots
+
+> **Sample data.** These images are rendered from the app's real pages and
+> stylesheet, but every organization, package name and figure shown is
+> fabricated. No production data appears in this repository.
+
+**Dashboard** — totals, recently processed packages, and a per-organization breakdown.
+
+![Dashboard](docs/screenshots/dashboard.png)
+
+**Search / Browse** — filter by filename, organization and date, or search the extracted XML metadata.
+
+![Search / Browse](docs/screenshots/search.png)
+
+**Upload** — admins upload `.xml` files or `.zip` archives containing them.
+
+![Upload XML](docs/screenshots/upload.png)
+
+---
+
 ## Setup for darkarchive.senylrc.org
 
 ---
